@@ -1,7 +1,7 @@
 /****************************************************************************
  *
- *   Copyright (C) 2015 Mark Charlebois. All rights reserved.
- *   Author: @author Mark Charlebois <charlebm#gmail.com>
+ *   Copyright (C) 2015-2020 Mark Charlebois. All rights reserved.
+ *   Author: @author Mark Charlebois <charlebm@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,7 +33,6 @@
  ****************************************************************************/
 
 /**
- * @file px4_posix_tasks.c
  * Implementation of existing task API for Linux
  */
 
@@ -60,22 +59,18 @@
 #include <px4_platform_common/posix.h>
 #include <systemlib/err.h>
 
-#define MAX_CMD_LEN 100
-
 #define PX4_MAX_TASKS 50
-#define SHELL_TASK_ID (PX4_MAX_TASKS+1)
 
 pthread_t _shell_task_id = 0;
 pthread_mutex_t task_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct task_entry {
-	pthread_t pid;
-	std::string name;
-	bool isused;
-	task_entry() : isused(false) {}
+	pthread_t pid{0};
+	std::string name{};
+	bool isused {false};
 };
 
-static task_entry taskmap[PX4_MAX_TASKS] = {};
+static task_entry taskmap[PX4_MAX_TASKS] {};
 
 typedef struct {
 	px4_main_t entry;
@@ -89,13 +84,11 @@ static void *entry_adapter(void *ptr)
 {
 	pthdata_t *data = (pthdata_t *) ptr;
 
-	int rv;
-
 	// set the threads name
 #ifdef __PX4_DARWIN
-	rv = pthread_setname_np(data->name);
+	int rv = pthread_setname_np(data->name);
 #else
-	rv = pthread_setname_np(pthread_self(), data->name);
+	int rv = pthread_setname_np(pthread_self(), data->name);
 #endif
 
 	if (rv) {
@@ -114,12 +107,12 @@ static void *entry_adapter(void *ptr)
 px4_task_t px4_task_spawn_cmd(const char *name, int scheduler, int priority, int stack_size, px4_main_t entry,
 			      char *const argv[])
 {
-
-	int i;
 	int argc = 0;
-	unsigned int len = 0;
 	struct sched_param param = {};
 	char *p = (char *)argv;
+
+	// The name is added as the first argument.
+	unsigned len = strlen(name) + 1;
 
 	// Calculate argc
 	while (p != (char *)nullptr) {
@@ -150,7 +143,7 @@ px4_task_t px4_task_spawn_cmd(const char *name, int scheduler, int priority, int
 	taskdata->entry = entry;
 	taskdata->argc = argc;
 
-	for (i = 0; i < argc; i++) {
+	for (int i = 0; i < argc; ++i) {
 		PX4_DEBUG("arg %d %s\n", i, argv[i]);
 		taskdata->argv[i] = (char *)offset;
 		strcpy((char *)offset, argv[i]);
@@ -226,7 +219,7 @@ px4_task_t px4_task_spawn_cmd(const char *name, int scheduler, int priority, int
 
 	px4_task_t taskid = 0;
 
-	for (i = 0; i < PX4_MAX_TASKS; ++i) {
+	for (int i = 0; i < PX4_MAX_TASKS; ++i) {
 		if (!taskmap[i].isused) {
 			taskmap[i].name = name;
 			taskmap[i].isused = true;
@@ -235,7 +228,7 @@ px4_task_t px4_task_spawn_cmd(const char *name, int scheduler, int priority, int
 		}
 	}
 
-	if (i >= PX4_MAX_TASKS) {
+	if (taskid >= PX4_MAX_TASKS) {
 		pthread_attr_destroy(&attr);
 		pthread_mutex_unlock(&task_mutex);
 		free(taskdata);
@@ -307,23 +300,25 @@ int px4_task_delete(px4_task_t id)
 
 void px4_task_exit(int ret)
 {
-	int i;
 	pthread_t pid = pthread_self();
 
+	px4_task_t taskid = PX4_MAX_TASKS;
+
 	// Get pthread ID from the opaque ID
-	for (i = 0; i < PX4_MAX_TASKS; ++i) {
+	for (int i = 0; i < PX4_MAX_TASKS; ++i) {
 		if (taskmap[i].pid == pid) {
 			pthread_mutex_lock(&task_mutex);
 			taskmap[i].isused = false;
+			taskid = i;
 			break;
 		}
 	}
 
-	if (i >= PX4_MAX_TASKS)  {
+	if (taskid == PX4_MAX_TASKS)  {
 		PX4_ERR("px4_task_exit: self task not found!");
 
 	} else {
-		PX4_DEBUG("px4_task_exit: %s", taskmap[i].name.c_str());
+		PX4_DEBUG("px4_task_exit: %s", taskmap[taskid].name.c_str());
 	}
 
 	pthread_mutex_unlock(&task_mutex);
@@ -422,7 +417,7 @@ const char *px4_get_taskname()
 
 int px4_prctl(int option, const char *arg2, px4_task_t pid)
 {
-	int rv;
+	int rv = -1;
 
 	switch (option) {
 	case PR_SET_NAME:
@@ -435,7 +430,6 @@ int px4_prctl(int option, const char *arg2, px4_task_t pid)
 		break;
 
 	default:
-		rv = -1;
 		PX4_WARN("FAILED SETTING TASK NAME");
 		break;
 	}
